@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# Установка mycelium-mind — общего движка сессий Claude Code (ядро экосистемы).
-# Ставит код в ~/.mycelium-mind/app, поднимает systemd-сервис на 127.0.0.1:8787.
+# Установка mycelium-claude-daemon — общего движка сессий Claude Code (ядро экосистемы).
+# Ставит код в ~/.mycelium-claude-daemon/app, поднимает systemd-сервис на 127.0.0.1:8787.
 # Данные (config, token) — в ~/.claude-pocket (совместимость с клиентом claude-pocket).
 set -euo pipefail
 
-INSTALL_DIR="$HOME/.mycelium-mind/app"
-SERVICE=/etc/systemd/system/mycelium-mind.service
+INSTALL_DIR="$HOME/.mycelium-claude-daemon/app"
+SERVICE=/etc/systemd/system/mycelium-claude-daemon.service
 
-say() { printf '\033[1;36m[mycelium-mind]\033[0m %s\n' "$*"; }
-die() { printf '\033[1;31m[mycelium-mind]\033[0m %s\n' "$*" >&2; exit 1; }
+say() { printf '\033[1;36m[mycelium-claude-daemon]\033[0m %s\n' "$*"; }
+die() { printf '\033[1;31m[mycelium-claude-daemon]\033[0m %s\n' "$*" >&2; exit 1; }
 
 # 1. Проверки
 command -v node >/dev/null 2>&1 || die "Нужен Node.js >= 20"
@@ -33,7 +33,7 @@ chmod 600 "$HOME/.claude-pocket/token" 2>/dev/null || true
 
 # 5. Миграция со старого claude-pocketd (тот же порт 8787 — иначе конфликт)
 if systemctl is-active claude-pocketd >/dev/null 2>&1 || systemctl is-enabled claude-pocketd >/dev/null 2>&1; then
-  say "Останавливаю старый claude-pocketd (заменяется на mycelium-mind)…"
+  say "Останавливаю старый claude-pocketd (заменяется на mycelium-claude-daemon)…"
   sudo systemctl disable --now claude-pocketd 2>/dev/null || true
 fi
 
@@ -59,13 +59,13 @@ WantedBy=multi-user.target
 UNIT
 
 sudo systemctl daemon-reload
-sudo systemctl enable mycelium-mind
-sudo systemctl restart mycelium-mind
+sudo systemctl enable mycelium-claude-daemon
+sudo systemctl restart mycelium-claude-daemon
 
 # Манифест для дашборда MyCelium Console (модуль объявляет себя)
 if [ -f "$SRC_DIR/registry.json" ]; then
   mkdir -p "$HOME/.config/eco/registry"
-  cp "$SRC_DIR/registry.json" "$HOME/.config/eco/registry/07-mycelium-mind.json"
+  cp "$SRC_DIR/registry.json" "$HOME/.config/eco/registry/07-mycelium-claude-daemon.json"
 fi
 
 say "Готово. Демон на http://127.0.0.1:8787 (токен: ~/.claude-pocket/token)."

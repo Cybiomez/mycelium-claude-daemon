@@ -1,4 +1,4 @@
-# mycelium-mind — движок сессий Claude
+# mycelium-claude-daemon — MyCelium ClaudeDaemon (движок сессий Claude)
 
 **Общий движок сессий Claude Code** — ядро экосистемы MyCelium. HTTP-API на `127.0.0.1:8787`, за которым живут сессии Claude Code (создать/продолжить, поток ответов, история, прерывание, интерактивные вопросы).
 
@@ -15,7 +15,7 @@
 ```bash
 ./deploy/install.sh
 ```
-Ставит код в `~/.mycelium-mind/app`, поднимает systemd-сервис `mycelium-mind` на `127.0.0.1:8787`. Данные (config, token) — в `~/.claude-pocket` (совместимо с клиентом claude-pocket; существующий токен переиспользуется). Если на машине работает старый `claude-pocketd` — установщик его заменяет (тот же порт).
+Ставит код в `~/.mycelium-claude-daemon/app`, поднимает systemd-сервис `mycelium-claude-daemon` на `127.0.0.1:8787`. Данные (config, token) — в `~/.claude-pocket` (совместимо с клиентом claude-pocket; существующий токен переиспользуется). Если на машине работает старый `claude-pocketd` — установщик его заменяет (тот же порт).
 
 ## Клиенты
 

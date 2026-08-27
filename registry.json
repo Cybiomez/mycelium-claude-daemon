@@ -1,10 +1,10 @@
 {
-  "id": "mycelium-mind",
-  "name": "mycelium-mind",
+  "id": "mycelium-claude-daemon",
+  "name": "ClaudeDaemon",
   "mark": "#B0A6E0",
-  "description": "Движок сессий Claude Code — ядро для работы с ассистентом (claude-pocket, Telegram-чат, оркестратор).",
+  "description": "Движок сессий Claude Code — ядро для работы с ассистентом (ClaudePocket, Telegram-чат, оркестратор).",
   "location": "Бокс",
   "mechanism": "systemd (постоянно)",
   "schedule": "постоянно",
-  "check": { "type": "systemd", "scope": "system", "unit": "mycelium-mind.service" }
+  "check": { "type": "systemd", "scope": "system", "unit": "mycelium-claude-daemon.service" }
 }
