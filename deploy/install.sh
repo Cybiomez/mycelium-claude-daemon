@@ -61,4 +61,11 @@ UNIT
 sudo systemctl daemon-reload
 sudo systemctl enable mycelium-mind
 sudo systemctl restart mycelium-mind
+
+# Манифест для дашборда MyCelium Console (модуль объявляет себя)
+if [ -f "$SRC_DIR/registry.json" ]; then
+  mkdir -p "$HOME/.config/eco/registry"
+  cp "$SRC_DIR/registry.json" "$HOME/.config/eco/registry/07-mycelium-mind.json"
+fi
+
 say "Готово. Демон на http://127.0.0.1:8787 (токен: ~/.claude-pocket/token)."
