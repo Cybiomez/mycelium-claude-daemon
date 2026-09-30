@@ -3,7 +3,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import readline from 'node:readline';
-import { encodeCwd } from './config.mjs';
+import { encodeCwd, CHANNEL_TAG } from './config.mjs';
+
+// Памятка канала, которую демон добавляет к ходу, — не текст человека
+const isChannelMemo = t => typeof t === 'string' && t.trimStart().startsWith('<' + CHANNEL_TAG + '>');
 
 export function projectsDir(cwd) {
   return path.join(os.homedir(), '.claude', 'projects', encodeCwd(cwd));
@@ -104,7 +107,7 @@ export function isInjectedUser(rec) {
 function extractText(content) {
   if (typeof content === 'string') return content.trim() || null;
   if (!Array.isArray(content)) return null;
-  const texts = content.filter(b => b.type === 'text').map(b => b.text).join(' ').trim();
+  const texts = content.filter(b => b.type === 'text' && !isChannelMemo(b.text)).map(b => b.text).join(' ').trim();
   return texts || null;
 }
 
@@ -153,7 +156,7 @@ export function normalizeBlocks(content) {
   if (!Array.isArray(content)) return [];
   const out = [];
   for (const b of content) {
-    if (b.type === 'text' && b.text?.trim()) out.push({ type: 'text', text: b.text });
+    if (b.type === 'text' && b.text?.trim()) { if (!isChannelMemo(b.text)) out.push({ type: 'text', text: b.text }); }
     else if (b.type === 'thinking' && b.thinking?.trim()) out.push({ type: 'thinking', text: b.thinking });
     else if (b.type === 'tool_use') out.push({ type: 'tool_use', id: b.id, name: b.name, input: safeInput(b.input) });
     else if (b.type === 'tool_result') out.push({

@@ -12,7 +12,7 @@ export function openStore() {
       session_key TEXT NOT NULL,        -- реальный session_id или 'new-<uuid>' до первого init
       text TEXT NOT NULL,
       attachments TEXT,                 -- JSON-массив путей
-      status TEXT NOT NULL DEFAULT 'queued',  -- queued | running | done | error | interrupted
+      status TEXT NOT NULL DEFAULT 'queued',  -- queued | running | done | error | interrupted | cancelled
       error TEXT,
       created_at INTEGER NOT NULL,
       started_at INTEGER,
@@ -34,18 +34,45 @@ export function openStore() {
       value TEXT
     );
   `);
+  // Миграции: колонки, добавленные после первой версии схемы
+  const jobCols = new Set(db.prepare('PRAGMA table_info(jobs)').all().map(c => c.name));
+  if (!jobCols.has('priority')) db.exec('ALTER TABLE jobs ADD COLUMN priority INTEGER NOT NULL DEFAULT 1');  // 1 — живой разговор, 0 — фоновые задания
+  if (!jobCols.has('channel')) db.exec('ALTER TABLE jobs ADD COLUMN channel TEXT');                         // памятка канала на этот ход (см. manager.buildPrompt)
   return {
     db,
-    addJob(sessionKey, text, attachments) {
+    addJob(sessionKey, text, attachments, { priority = 1, channel = null } = {}) {
       const r = db.prepare(
-        'INSERT INTO jobs (session_key, text, attachments, created_at) VALUES (?, ?, ?, ?)'
-      ).run(sessionKey, text, JSON.stringify(attachments ?? []), Date.now());
+        'INSERT INTO jobs (session_key, text, attachments, created_at, priority, channel) VALUES (?, ?, ?, ?, ?, ?)'
+      ).run(sessionKey, text, JSON.stringify(attachments ?? []), Date.now(), priority, channel);
       return r.lastInsertRowid;
     },
-    nextQueuedJob(excludeKeys) {
-      // Первый queued-job, чья сессия сейчас не занята
+    // Следующий ход: у каждой свободной сессии берём её первый queued-job, затем
+    // выбираем по приоритету, а среди равных — сессию, которую дольше всех не
+    // обслуживали (очередь по кругу: 5 сообщений одной темы не задерживают другую).
+    nextQueuedJob(excludeKeys, lastServed = new Map()) {
       const rows = db.prepare("SELECT * FROM jobs WHERE status = 'queued' ORDER BY id").all();
-      return rows.find(j => !excludeKeys.has(j.session_key)) ?? null;
+      const heads = new Map();
+      for (const j of rows) {
+        if (excludeKeys.has(j.session_key) || heads.has(j.session_key)) continue;
+        heads.set(j.session_key, j);
+      }
+      let best = null;
+      for (const j of heads.values()) {
+        if (!best) { best = j; continue; }
+        if (j.priority !== best.priority) { if (j.priority > best.priority) best = j; continue; }
+        const a = lastServed.get(j.session_key) ?? 0, b = lastServed.get(best.session_key) ?? 0;
+        if (a !== b) { if (a < b) best = j; continue; }
+        if (j.id < best.id) best = j;
+      }
+      return best;
+    },
+    // Все ожидающие ходы в порядке поступления (для GET /api/queue)
+    queuedJobs() {
+      return db.prepare("SELECT id, session_key, text, priority, created_at FROM jobs WHERE status = 'queued' ORDER BY id").all();
+    },
+    // Убрать ход из очереди — только пока он не начался
+    cancelJob(id) {
+      return db.prepare("UPDATE jobs SET status = 'cancelled', finished_at = ? WHERE id = ? AND status = 'queued'").run(Date.now(), id).changes > 0;
     },
     queuedForSession(sessionKey) {
       return db.prepare("SELECT * FROM jobs WHERE status = 'queued' AND session_key = ? ORDER BY id").all(sessionKey);

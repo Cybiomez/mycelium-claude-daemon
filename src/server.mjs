@@ -7,8 +7,9 @@ import { loadConfig, loadToken, UPLOADS_DIR } from './config.mjs';
 import { openStore } from './store.mjs';
 import { listSessions, readHistory, setCustomTitle } from './history.mjs';
 import { Manager, slimUsage } from './manager.mjs';
+import { externalSessionPids } from './locks.mjs';
 
-const VERSION = '0.1.0';
+const VERSION = '0.2.0';
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 
 const cfg = loadConfig();
@@ -133,9 +134,8 @@ const server = http.createServer(async (req, res) => {
       }
       if (req.method === 'POST') {
         const body = JSON.parse((await readBody(req)).toString() || '{}');
-        // Пустая модель — сброс к дефолту CLI
-        if (body.model === '') body.model = null;
-        store.setSettings(key, body);
+        // Пустое значение — сброс к дефолту CLI; живой процесс перезапустится с новыми
+        mgr.applySettings(key, body);
         return json(res, 200, { ok: true });
       }
     }
@@ -145,8 +145,30 @@ const server = http.createServer(async (req, res) => {
       const text = (body.text ?? '').toString();
       if (!text.trim()) return json(res, 400, { error: 'empty text' });
       const sessionId = body.sessionId ? resolveKey(body.sessionId) : null;
-      const { jobId, sessionKey } = mgr.submit(sessionId, text, body.attachments ?? []);
-      return json(res, 200, { jobId, sessionKey });
+      const { jobId, sessionKey, position } = mgr.submit(sessionId, text, body.attachments ?? [], {
+        settings: body.settings, channel: body.channel, priority: body.priority,
+      });
+      return json(res, 200, { jobId, sessionKey, position });
+    }
+
+    // Занята ли сессия внешним процессом Claude Code (VS Code / CLI) — см. locks.mjs
+    if ((m = p.match(/^\/api\/sessions\/([^/]+)\/lock$/)) && req.method === 'GET') {
+      const key = resolveKey(m[1]);
+      const pids = key.startsWith('new-') ? [] : externalSessionPids(key);
+      return json(res, 200, { locked: pids.length > 0, pids });
+    }
+
+    // Модели аккаунта (кэш supportedModels() из SDK) — клиенты строят по нему меню
+    if (p === '/api/models' && req.method === 'GET') {
+      return json(res, 200, mgr.getModels() ?? { models: [], fetchedAt: null });
+    }
+
+    // Очередь: что выполняется и что ждёт, по всем сессиям
+    if (p === '/api/queue' && req.method === 'GET') {
+      return json(res, 200, mgr.getQueue());
+    }
+    if ((m = p.match(/^\/api\/jobs\/(\d+)$/)) && req.method === 'DELETE') {
+      return json(res, 200, { ok: mgr.cancelJob(Number(m[1])) });
     }
 
     // Папки сессий: раскладка живёт на сервере (kv в SQLite), поэтому одинакова
@@ -241,7 +263,9 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(cfg.port, cfg.host, () => {
-  log(`claude-pocketd v${VERSION} слушает http://${cfg.host}:${cfg.port} (cwd=${cfg.cwd})`);
+  log(`mycelium-claude-daemon v${VERSION} слушает http://${cfg.host}:${cfg.port} (cwd=${cfg.cwd}, maxConcurrent=${cfg.maxConcurrent})`);
+  // Чистая установка: списка моделей ещё нет — узнать его служебным процессом
+  setTimeout(() => mgr.probeModels().catch(() => {}), 5_000);
 });
 
 process.on('uncaughtException', e => log('uncaught:', e));
