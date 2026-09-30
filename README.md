@@ -7,8 +7,22 @@
 ## Что это
 
 - Node.js-сервис на `@anthropic-ai/claude-agent-sdk`. Точка входа — `src/server.mjs`.
-- API (Bearer-токен, только localhost): `POST /api/messages` (создать/продолжить сессию), `GET /api/stream` (поток событий), `GET /api/sessions`, история, `interrupt`, `answer`, `usage`, `context`.
-- Управляет несколькими сессиями одновременно (`sessionId=null` → новая).
+- API (Bearer-токен, только localhost):
+
+  | Метод | Что |
+  |---|---|
+  | `POST /api/messages` | Ход в сессию (`sessionId=null` → новая). Необязательно: `settings` {model, effort, permissionMode} — применяются до запуска; `channel` — памятка канала; `priority` (1 разговор, 0 фон) |
+  | `GET /api/stream` | Поток событий SSE (`job.queued` с позицией, `job.waiting`, `job.cancelled`, `models.changed`, …) |
+  | `GET /api/sessions`, `…/:id/history`, `…/:id/title` | Список, история, переименование |
+  | `GET/POST /api/sessions/:id/settings` | Модель / effort / режим; смена перезапускает живой процесс |
+  | `GET /api/sessions/:id/lock` | Открыта ли сессия внешним Claude Code (VS Code, CLI) |
+  | `POST …/:id/interrupt`, `…/:id/answer` | Прерывание, ответ на `AskUserQuestion` |
+  | `GET /api/models` | Модели аккаунта и их уровни effort (кэш `supportedModels()`) |
+  | `GET /api/queue`, `DELETE /api/jobs/:id` | Очередь; убрать ход, пока он не начался |
+  | `GET /api/usage`, `…/:id/context`, `/api/commands`, `/api/upload`, `/api/file`, `/api/folders` | Лимиты, контекст, слеш-команды, файлы, папки |
+
+- Очередь: один живой ход на весь демон (`maxConcurrent`), по кругу между сессиями, разговор впереди фоновых заданий. Сторож памяти: новый процесс Claude не стартует, пока `MemAvailable` < `minFreeMemMb`.
+- Каталог данных — `~/.claude-pocket`, переопределяется `CLAUDE_DAEMON_DATA_DIR` (тестовый экземпляр рядом с рабочим).
 
 ## Установка
 
@@ -20,7 +34,7 @@
 ## Клиенты
 
 - **claude-pocket** (Android) — подключается по SSH-туннелю к `:8787`, токен `~/.claude-pocket/token`.
-- **Telegram-чат** экосистемы (в работе) — мост в одну выделенную сессию.
+- **Telegram-бот** экосистемы (в работе) — темы супергруппы = сессии демона.
 - **Оркестратор** (позже) — несколько сессий через тот же API.
 
 ## Часть экосистемы

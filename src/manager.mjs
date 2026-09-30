@@ -2,6 +2,8 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import crypto from 'node:crypto';
 import { normalizeBlocks } from './history.mjs';
+import { CHANNEL_TAG } from './config.mjs';
+import { memAvailableMb } from './locks.mjs';
 
 // Управляемый асинх-итератор входа для streaming input mode
 function makeInput() {
@@ -34,6 +36,9 @@ export class Manager {
     this.usageCache = store.kvGet('usage') ?? null;
     this.contextCache = new Map(Object.entries(store.kvGet('contextCache') ?? {}));
     this.commandsCache = store.kvGet('commands') ?? null;
+    this.modelsCache = store.kvGet('models') ?? null;   // {models: [...], fetchedAt}
+    this.lastServed = new Map();   // sessionKey -> ts последнего запуска хода (очередь по кругу)
+    this.memTimer = null;          // повтор pump(), когда ход ждёт памяти
     store.recoverStale();
   }
 
@@ -53,12 +58,103 @@ export class Manager {
 
   // ---------- публичное API ----------
   // Возвращает {jobId, sessionKey}. sessionId=null => новая сессия.
-  submit(sessionId, text, attachments) {
+  // opts: settings — {model, effort, permissionMode}, применяются ДО запуска процесса;
+  //       channel — ключ памятки канала (cfg.channelMemos); priority — 1 разговор, 0 фон.
+  submit(sessionId, text, attachments, opts = {}) {
     const sessionKey = sessionId ?? ('new-' + crypto.randomUUID());
-    const jobId = this.store.addJob(sessionKey, text, attachments);
-    this.emit('job.queued', sessionKey, { jobId, text: text.slice(0, 200) });
+    if (opts.settings && typeof opts.settings === 'object') this.applySettings(sessionKey, opts.settings);
+    const priority = opts.priority === 0 ? 0 : 1;
+    const channel = typeof opts.channel === 'string' && this.cfg.channelMemos?.[opts.channel] ? opts.channel : null;
+    const jobId = this.store.addJob(sessionKey, text, attachments, { priority, channel });
+    const position = this.queuePosition(jobId);
+    this.emit('job.queued', sessionKey, { jobId, text: text.slice(0, 200), position });
     setImmediate(() => this.pump());
-    return { jobId, sessionKey };
+    return { jobId, sessionKey, position };
+  }
+
+  // Смена настроек сессии. Живой процесс работает со старыми — его надо
+  // перезапустить: простаивающий закрываем сразу, занятый — после текущего хода.
+  applySettings(sessionKey, body) {
+    const clean = {};
+    for (const k of ['permissionMode', 'model', 'effort']) {
+      if (body[k] === undefined) continue;
+      clean[k] = body[k] === '' ? null : body[k];
+    }
+    this.store.setSettings(sessionKey, clean);
+    const a = this.active.get(sessionKey);
+    if (a) {
+      a.stale = true;
+      if (a.currentJobId == null) this.closeProcess(a);
+    }
+  }
+
+  closeProcess(a) {
+    if (a.closing) return;
+    a.closing = true;
+    clearTimeout(a.idleTimer);
+    try { a.input.close(); } catch { /* уже закрыт */ }
+  }
+
+  // Сколько ходов впереди: все выполняющиеся + ожидающие, поступившие раньше
+  queuePosition(jobId) {
+    const running = this.runningSessions().length;
+    const ahead = this.store.queuedJobs().filter(j => j.id < jobId).length;
+    return running + ahead;
+  }
+
+  getQueue() {
+    const running = [...this.active.entries()]
+      .filter(([, a]) => a.currentJobId != null)
+      .map(([k, a]) => ({ jobId: a.currentJobId, session: a.sessionId ?? k, status: 'running', startedAt: a.startedAt }));
+    const queued = this.store.queuedJobs().map(j => ({
+      jobId: j.id, session: this.store.resolveAlias(j.session_key) ?? j.session_key, status: 'queued',
+      text: j.text.slice(0, 200), priority: j.priority, createdAt: j.created_at,
+    }));
+    return { running, queued };
+  }
+
+  cancelJob(jobId) {
+    const job = this.store.getJob(jobId);
+    if (!job || !this.store.cancelJob(jobId)) return false;
+    this.emit('job.cancelled', job.session_key, { jobId });
+    return true;
+  }
+
+  getModels() { return this.modelsCache; }
+
+  cacheModels(list) {
+    const models = (list ?? []).map(m => ({
+      value: m.value, displayName: m.displayName, description: m.description,
+      supportsEffort: !!m.supportsEffort, supportedEffortLevels: m.supportedEffortLevels ?? [],
+    }));
+    if (!models.length) return;
+    const before = new Set((this.modelsCache?.models ?? []).map(m => m.value));
+    this.modelsCache = { models, fetchedAt: Date.now() };
+    this.store.kvSet('models', this.modelsCache);
+    const added = models.filter(m => before.size && !before.has(m.value)).map(m => m.value);
+    if (added.length) this.emit('models.changed', null, { added });
+  }
+
+  // Список моделей при пустом кэше (чистая установка): короткий служебный
+  // процесс только ради supportedModels(), если хватает памяти и демон свободен.
+  async probeModels() {
+    if (this.modelsCache?.models?.length || this.active.size) return;
+    if (memAvailableMb() < this.cfg.minFreeMemMb) return;
+    const input = makeInput();
+    const q = query({ prompt: input, options: { cwd: this.cfg.cwd } });
+    try {
+      const list = await Promise.race([
+        q.supportedModels(),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 60_000)),
+      ]);
+      this.cacheModels(list);
+      this.log('models probe:', this.modelsCache?.models?.length ?? 0, 'моделей');
+    } catch (e) {
+      this.log('models probe failed:', e.message);
+    } finally {
+      input.close();
+      try { q.close(); } catch { /* ок */ }
+    }
   }
 
   async interrupt(sessionKey) {
@@ -128,10 +224,28 @@ export class Manager {
   // ---------- воркер ----------
   pump() {
     while (true) {
-      const busy = new Set([...this.active.keys()].filter(k => this.active.get(k).currentJobId != null));
-      if (busy.size >= this.cfg.maxConcurrent) return;
-      const job = this.store.nextQueuedJob(busy);
+      const entries = [...this.active.entries()];
+      const running = entries.filter(([, a]) => a.currentJobId != null).length;
+      if (running >= this.cfg.maxConcurrent) return;
+      // Занятые и закрывающиеся сессии пропускаем: у закрывающейся ход стартует,
+      // когда процесс завершится (consume → finally → pump)
+      const skip = new Set(entries.filter(([, a]) => a.currentJobId != null || a.closing).map(([k]) => k));
+      const job = this.store.nextQueuedJob(skip, this.lastServed);
       if (!job) return;
+      const warm = this.active.get(job.session_key);
+      if (warm && warm.stale) { this.closeProcess(warm); continue; }   // настройки сменились
+      if (!warm) {
+        // Нужен новый процесс Claude — сначала сторож памяти
+        const free = memAvailableMb();
+        if (free < this.cfg.minFreeMemMb) {
+          const idle = entries.filter(([, a]) => a.currentJobId == null && !a.closing);
+          if (idle.length) { idle.forEach(([, a]) => this.closeProcess(a)); return; }  // освободим простаивающие и повторим
+          this.emit('job.waiting', job.session_key, { jobId: job.id, reason: 'memory', freeMb: free, needMb: this.cfg.minFreeMemMb });
+          if (!this.memTimer) this.memTimer = setTimeout(() => { this.memTimer = null; this.pump(); }, this.cfg.memoryRetryMs);
+          return;
+        }
+      }
+      this.lastServed.set(job.session_key, Date.now());
       this.runJob(job).catch(e => this.log('runJob fatal:', e));
     }
   }
@@ -139,6 +253,9 @@ export class Manager {
   buildPrompt(job) {
     const atts = JSON.parse(job.attachments || '[]');
     const content = [];
+    // Памятка канала — отдельным блоком в начале хода; history.mjs вырезает её из ленты
+    const memo = job.channel ? this.cfg.channelMemos?.[job.channel] : null;
+    if (memo) content.push({ type: 'text', text: `<${CHANNEL_TAG}>${memo}</${CHANNEL_TAG}>` });
     let text = job.text;
     const fileNotes = [];
     for (const att of atts) {
@@ -159,7 +276,7 @@ export class Manager {
     const key = job.session_key;
     this.store.markJob(job.id, 'running');
     let a = this.active.get(key);
-    if (a && !a.currentJobId) {
+    if (a && !a.currentJobId && !a.closing) {
       // Тёплый живой процесс — шлём в него
       clearTimeout(a.idleTimer);
       a.currentJobId = job.id;
@@ -214,12 +331,14 @@ export class Manager {
         // interrupt приводит к error_during_execution + исключению — это штатно
         const wasInterrupted = /interrupt|abort/i.test(e.message) || a.interrupted;
         this.store.markJob(a.currentJobId, wasInterrupted ? 'interrupted' : 'error', wasInterrupted ? null : e.message);
-        this.emit(wasInterrupted ? 'job.interrupted' : 'job.error', key, { jobId: a.currentJobId, error: wasInterrupted ? null : e.message });
+        this.emit(wasInterrupted ? 'job.interrupted' : 'job.error', a.sessionId ?? key, { jobId: a.currentJobId, error: wasInterrupted ? null : e.message });
         a.currentJobId = null;
       }
     } finally {
       clearTimeout(a.idleTimer);
-      this.active.delete(key);
+      // После init новой сессии запись переехала с temp-ключа на реальный id —
+      // удаляем по нему и только свою (на ключе мог уже подняться новый процесс)
+      for (const k of [key, a.sessionId]) if (k && this.active.get(k) === a) this.active.delete(k);
       this.emit('session.closed', a.sessionId ?? key, {});
       setImmediate(() => this.pump());
     }
@@ -240,6 +359,8 @@ export class Manager {
             key = sid;
           }
           this.emit('turn.init', a.sessionId ?? key, { model: msg.model, permissionMode: msg.permissionMode });
+          // Список моделей — процесс уже живой, запрос бесплатный
+          a.q.supportedModels().then(ms => this.cacheModels(ms)).catch(() => {});
           // Обновляем кэш слеш-команд
           a.q.supportedCommands().then(cmds => {
             this.commandsCache = cmds.map(c => ({ name: c.name, description: c.description, argumentHint: c.argumentHint }));
@@ -289,11 +410,13 @@ export class Manager {
         this.refreshMeters(sid, a);
         // Есть ли следующий job этой сессии? Иначе — таймер на закрытие процесса
         const next = this.store.queuedForSession(sid)[0];
-        if (next) {
-          setImmediate(() => this.pump());
-        } else {
-          a.idleTimer = setTimeout(() => { try { a.input.close(); } catch { /* уже закрыт */ } }, this.cfg.idleProcessTimeoutMs);
+        if (a.stale) {
+          this.closeProcess(a);   // настройки сменились во время хода — следующий ход в новом процессе
+        } else if (!next) {
+          a.idleTimer = setTimeout(() => this.closeProcess(a), this.cfg.idleProcessTimeoutMs);
         }
+        // Слот освободился — очередь двигается сразу (ход другой сессии не ждёт простоя этой)
+        setImmediate(() => this.pump());
         break;
       }
       default: break;
