@@ -30,6 +30,7 @@ export class Manager {
     this.log = log;
     this.active = new Map();   // sessionKey -> {q, input, sessionId, idleTimer, currentJobId, startedAt}
     this.pending = new Map();   // sessionId -> {resolve} для интерактивных вопросов (AskUserQuestion)
+    this.requests = new Map();  // requestId -> {session, kind, resolve} — разрешения и планы
     this.listeners = new Set(); // SSE подписчики: fn(event)
     this.seq = 0;
     this.recent = [];          // кольцевой буфер последних событий для reconnect
@@ -180,6 +181,29 @@ export class Manager {
   cancelPending(sessionKey) {
     const p = this.pending.get(sessionKey);
     if (p) p.resolve(null);
+    for (const [id, r] of this.requests) if (r.session === sessionKey) { this.requests.delete(id); r.resolve(null); }
+  }
+
+  // Запрос решения у человека (разрешение / план): событие с requestId, ждём ответ клиента.
+  // Своё id у каждого запроса — модель может просить несколько действий параллельно.
+  ask(sid, kind, payload) {
+    const requestId = crypto.randomUUID().slice(0, 12);
+    return new Promise(resolve => {
+      this.requests.set(requestId, { session: sid, kind, resolve });
+      this.emit(kind, sid, { requestId, ...payload });
+    });
+  }
+
+  resolveRequest(requestId, value) {
+    const r = this.requests.get(requestId);
+    if (!r) return false;
+    this.requests.delete(requestId);
+    r.resolve(value);
+    return true;
+  }
+
+  pendingRequests(sid) {
+    return [...this.requests.entries()].filter(([, r]) => r.session === sid).map(([id, r]) => ({ requestId: id, kind: r.kind }));
   }
 
   status(sessionKey) {
@@ -296,9 +320,46 @@ export class Manager {
     // из приложения; всё остальное — разрешаем (режим «Авто»). AskUserQuestion
     // доходит сюда в любом режиме прав. Пл\.-режим строгих правок этим путём не
     // навязывается (осознанное упрощение, docs/decisions.md).
-    const canUseTool = async (toolName, toolInput) => {
-      if (toolName !== 'AskUserQuestion') return { behavior: 'allow', updatedInput: toolInput };
+    const mode = settings.permission_mode ?? this.cfg.permissionMode;
+    // canUseTool: решения, которые принимает человек в клиенте.
+    //  • AskUserQuestion — вопрос с вариантами (любой режим);
+    //  • ExitPlanMode — режим «План»: план на утверждение «Утвердить / Доработать»;
+    //  • прочие инструменты — в режиме «С подтверждением» (default): «Да / Да, не спрашивать / Нет».
+    //    В «Авто» (bypassPermissions) разрешаем без вопросов.
+    const canUseTool = async (toolName, toolInput, opts = {}) => {
       const sid = a?.sessionId ?? key;
+      if (toolName === 'ExitPlanMode') {
+        const r = await this.ask(sid, 'plan', { plan: String(toolInput?.plan ?? '') });
+        if (!r) return { behavior: 'deny', message: 'План не утверждён: ход прерван.' };
+        if (r.approve) {
+          // Дальше по плану — без вопросов. Режим «План» вернётся со следующего хода: процесс
+          // пометим устаревшим, и следующий ход стартует заново с режимом из настроек.
+          // SDK после выхода из плана переводит процесс в режим с подтверждениями — поэтому
+          // «без вопросов до конца хода» держим сами флагом процесса (проверено 02-10-2026)
+          a.planApproved = true;
+          a.stale = true;
+          return { behavior: 'allow', updatedInput: toolInput };
+        }
+        return { behavior: 'deny', message: 'Алексей попросил доработать план. Замечания: ' +
+                 (r.feedback?.trim() || 'без конкретики — пересмотри и предложи вариант лучше') };
+      }
+      if (toolName !== 'AskUserQuestion') {
+        if (mode === 'bypassPermissions' || a?.planApproved || a?.allowTools?.has(toolName)) {
+          return { behavior: 'allow', updatedInput: toolInput };
+        }
+        const r = await this.ask(sid, 'permission', {
+          tool: toolName, title: opts.title ?? null, displayName: opts.displayName ?? null,
+          input: summarizeInput(toolInput),
+        });
+        if (!r || r.decision === 'deny') {
+          return { behavior: 'deny', message: r ? 'Алексей запретил это действие.' : 'Запрос отменён.' };
+        }
+        if (r.decision === 'always') {
+          (a.allowTools ??= new Set()).add(toolName);
+          return { behavior: 'allow', updatedInput: toolInput, updatedPermissions: opts.suggestions ?? [] };
+        }
+        return { behavior: 'allow', updatedInput: toolInput };
+      }
       const questions = toolInput?.questions ?? [];
       this.emit('question', sid, { questions });
       const answers = await new Promise(resolve => { this.pending.set(sid, { resolve }); });
@@ -446,6 +507,19 @@ export class Manager {
     const a = this.active.get(sessionKey);
     if (a) a.interrupted = true;
   }
+}
+
+// Краткое описание ввода инструмента для кнопки «Разрешить?» (без огромных содержимых файлов)
+function summarizeInput(input) {
+  if (!input || typeof input !== 'object') return {};
+  const out = {};
+  for (const k of ['command', 'description', 'file_path', 'path', 'pattern', 'url', 'query', 'notebook_path']) {
+    if (input[k] != null) out[k] = String(input[k]).slice(0, 400);
+  }
+  if (input.old_string != null) out.old_string = String(input.old_string).slice(0, 300);
+  if (input.new_string != null) out.new_string = String(input.new_string).slice(0, 300);
+  if (input.content != null) out.content = String(input.content).slice(0, 300);
+  return out;
 }
 
 export function slimUsage(u) {

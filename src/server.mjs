@@ -7,9 +7,10 @@ import { loadConfig, loadToken, UPLOADS_DIR } from './config.mjs';
 import { openStore } from './store.mjs';
 import { listSessions, readHistory, setCustomTitle } from './history.mjs';
 import { Manager, slimUsage } from './manager.mjs';
+import { forkSession } from '@anthropic-ai/claude-agent-sdk';
 import { externalSessionPids } from './locks.mjs';
 
-const VERSION = '0.2.0';
+const VERSION = '0.3.0';
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 
 const cfg = loadConfig();
@@ -109,6 +110,27 @@ const server = http.createServer(async (req, res) => {
       const body = JSON.parse((await readBody(req)).toString() || '{}');
       const ok = mgr.answerQuestion(key, body.answers ?? {});
       return json(res, 200, { ok });
+    }
+    // Решения человека: разрешение действия и утверждение плана (manager.ask)
+    if ((m = p.match(/^\/api\/sessions\/([^/]+)\/permission$/)) && req.method === 'POST') {
+      const body = JSON.parse((await readBody(req)).toString() || '{}');
+      const decision = ['allow', 'always', 'deny'].includes(body.decision) ? body.decision : 'deny';
+      return json(res, 200, { ok: mgr.resolveRequest(String(body.requestId ?? ''), { decision }) });
+    }
+    if ((m = p.match(/^\/api\/sessions\/([^/]+)\/plan$/)) && req.method === 'POST') {
+      const body = JSON.parse((await readBody(req)).toString() || '{}');
+      return json(res, 200, { ok: mgr.resolveRequest(String(body.requestId ?? ''),
+        { approve: !!body.approve, feedback: (body.feedback ?? '').toString().slice(0, 4000) }) });
+    }
+    if ((m = p.match(/^\/api\/sessions\/([^/]+)\/requests$/)) && req.method === 'GET') {
+      return json(res, 200, { requests: mgr.pendingRequests(resolveKey(m[1])) });
+    }
+    // Развилка: копия сессии новой веткой (модель не вызывается)
+    if ((m = p.match(/^\/api\/sessions\/([^/]+)\/fork$/)) && req.method === 'POST') {
+      const key = resolveKey(m[1]);
+      const body = JSON.parse((await readBody(req)).toString() || '{}');
+      const r = await forkSession(key, { dir: cfg.cwd, ...(body.title ? { title: String(body.title).slice(0, 200) } : {}) });
+      return json(res, 200, { sessionId: r.sessionId });
     }
     if ((m = p.match(/^\/api\/sessions\/([^/]+)\/interrupt$/)) && req.method === 'POST') {
       const key = resolveKey(m[1]);
