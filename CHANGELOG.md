@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.0 — не выпущено
+
+- Режим «С подтверждением»: событие `permission`, ответ `POST /api/sessions/:id/permission` (allow / always / deny).
+- Режим «План»: событие `plan` (ExitPlanMode), ответ `POST /api/sessions/:id/plan` (approve, feedback); после утверждения — без вопросов до конца хода.
+- `GET /api/sessions/:id/requests`, `POST /api/sessions/:id/fork` (развилка через `forkSession`).
+- Установщик не перезапускает демон посреди хода.
+
 ## 0.2.0 — не выпущено
 
 Подготовка к Telegram-клиенту (ТЗ `~/projects/notes/tz-claude-tg-bot.md`, §10).
