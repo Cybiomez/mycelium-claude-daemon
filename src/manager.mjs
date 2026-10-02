@@ -131,6 +131,9 @@ export class Manager {
     const before = new Set((this.modelsCache?.models ?? []).map(m => m.value));
     this.modelsCache = { models, fetchedAt: Date.now() };
     this.store.kvSet('models', this.modelsCache);
+    // Первая сверка после старта демона — базовая линия, не «новинка»: иначе
+    // каждый перезапуск объявляет модель, у которой чуть сменился id (fable-5↔fable-5-1).
+    if (!this.modelsBaselined) { this.modelsBaselined = true; return; }
     const added = models.filter(m => before.size && !before.has(m.value)).map(m => m.value);
     if (added.length) this.emit('models.changed', null, { added });
   }
