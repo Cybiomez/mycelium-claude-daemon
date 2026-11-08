@@ -55,6 +55,9 @@ export async function archiveSession(cfg, id, { reason = 'delete', topic = null 
   const items = parts(cfg.cwd, id);
   if (!fs.existsSync(items[0][1])) throw Object.assign(new Error('session not found'), { code: 404 });
   const meta = await readSessionMeta(items[0][1]);
+  // Открытые пункты чек-листа — клиенту (перенос в новую сессию при перезапуске темы)
+  let openTodo = [];
+  try { openTodo = fs.readFileSync(items[2][1], 'utf8').split('\n').filter(l => /^\s*- \[ \]/.test(l)); } catch { /* чек-листа нет */ }
   const now = Date.now();
   const days = Number(cfg.archiveRetentionDays) || 90;
   const root = archiveDir(cfg);
@@ -68,7 +71,7 @@ export async function archiveSession(cfg, id, { reason = 'delete', topic = null 
   }
   const manifest = {
     id, title: meta.title, messageCount: meta.messageCount, reason, topic,
-    archivedAt: now, expiresAt: now + days * DAY, parts: moved,
+    archivedAt: now, expiresAt: now + days * DAY, parts: moved, openTodo,
   };
   fs.writeFileSync(path.join(folder, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n', { mode: 0o600 });
   return manifest;
