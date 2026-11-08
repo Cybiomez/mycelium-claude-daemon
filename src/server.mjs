@@ -11,10 +11,12 @@ import { forkSession } from '@anthropic-ai/claude-agent-sdk';
 import { externalSessionPids } from './locks.mjs';
 import { archiveSession, restoreSession, listArchive, purgeArchive } from './archive.mjs';
 
-const VERSION = '0.4.0';
+const VERSION = '0.4.1';
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 
 const cfg = loadConfig();
+// Сессии движка видны в VS Code наравне с остальными (см. config.entrypoint)
+if (cfg.entrypoint && !process.env.CLAUDE_CODE_ENTRYPOINT) process.env.CLAUDE_CODE_ENTRYPOINT = cfg.entrypoint;
 const token = loadToken();
 const store = openStore();
 const mgr = new Manager(cfg, store, log);
