@@ -16,6 +16,8 @@
   | `GET /api/sessions`, `…/:id/history`, `…/:id/title` | Список, история, переименование |
   | `GET/POST /api/sessions/:id/settings` | Модель / effort / режим; смена перезапускает живой процесс |
   | `GET /api/sessions/:id/lock` | Открыта ли сессия внешним Claude Code (VS Code, CLI) |
+  | `POST /api/sessions/:id/archive` | Удалить сессию в архив (`~/archive/sessions`, 90 дней, потом безвозвратно) |
+  | `GET /api/archive`, `POST /api/archive/:id/restore` | Что в архиве; вернуть сессию на место |
   | `POST …/:id/interrupt`, `…/:id/answer` | Прерывание, ответ на `AskUserQuestion` |
   | `GET /api/models` | Модели аккаунта и их уровни effort (кэш `supportedModels()`) |
   | `GET /api/queue`, `DELETE /api/jobs/:id` | Очередь; убрать ход, пока он не начался |

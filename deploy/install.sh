@@ -78,6 +78,7 @@ sudo systemctl restart mycelium-claude-daemon
 if [ -f "$SRC_DIR/registry.json" ]; then
   mkdir -p "$HOME/.config/eco/registry"
   cp "$SRC_DIR/registry.json" "$HOME/.config/eco/registry/07-mycelium-claude-daemon.json"
+  [ -f "$SRC_DIR/registry-archive.json" ] && cp "$SRC_DIR/registry-archive.json" "$HOME/.config/eco/registry/07b-session-archive.json"
 fi
 
 say "Готово. Демон на http://127.0.0.1:8787 (токен: ~/.claude-pocket/token)."

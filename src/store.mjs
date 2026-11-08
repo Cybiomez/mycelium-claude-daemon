@@ -113,6 +113,12 @@ export function openStore() {
     kvSet(key, value) {
       db.prepare('INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)').run(key, JSON.stringify(value));
     },
+    // Окончательное удаление сессии (истёк срок в архиве): её строки больше не нужны
+    forgetSession(sessionId) {
+      db.prepare('DELETE FROM jobs WHERE session_key = ?').run(sessionId);
+      db.prepare('DELETE FROM session_settings WHERE session_key = ?').run(sessionId);
+      db.prepare('DELETE FROM session_alias WHERE session_id = ?').run(sessionId);
+    },
     // На старте демона: подвисшие running-джобы -> error (демон перезапускался)
     recoverStale() {
       db.prepare("UPDATE jobs SET status = 'error', error = 'демон перезапущен во время выполнения' WHERE status = 'running'").run();
