@@ -1,0 +1,7 @@
+{
+  "id": "session-archive", "name": "Архив сессий", "mark": "#B0A6E0",
+  "description": "Удалённые сессии Claude (транскрипт, файлы, чек-лист) лежат в архиве 90 дней, потом удаляются безвозвратно. Чистку делает движок сессий.",
+  "location": "Бокс", "mechanism": "Внутри ClaudeDaemon", "schedule": "Каждые 6 часов",
+  "monitor": { "watches": "Последняя чистка архива ~/archive/sessions" },
+  "check": { "type": "file_mtime", "path": "~/archive/sessions/.last-purge", "warn_hours": 13, "crit_hours": 26 }
+}

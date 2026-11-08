@@ -23,6 +23,9 @@ const DEFAULTS = {
   effort: null,  // null = дефолт
   // Через сколько мс простоя закрывать живой CLI-процесс после ответа (экономия RAM)
   idleProcessTimeoutMs: 60_000,
+  // Архив сессий: где лежит и сколько дней до окончательного удаления
+  archiveDir: null,             // null = ~/archive/sessions
+  archiveRetentionDays: 90,
   // Памятки каналов: клиент передаёт channel в POST /api/messages, демон добавляет
   // текст памятки к ходу (см. manager.buildPrompt). Переопределяются в config.json.
   channelMemos: {

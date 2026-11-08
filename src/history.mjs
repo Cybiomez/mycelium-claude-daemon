@@ -41,7 +41,7 @@ export async function listSessions(cwd) {
   return out.map(({ file, ...rest }) => rest);
 }
 
-async function readSessionMeta(file) {
+export async function readSessionMeta(file) {
   // customTitle — имя, заданное пользователем в Claude Code (CLI/десктоп), высший
   // приоритет. autoTitle — ai-title/summary. Берём последнюю запись каждого вида.
   let customTitle = null, autoTitle = null, lastText = null, firstUserText = null, messageCount = 0;

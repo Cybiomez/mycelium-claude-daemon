@@ -212,6 +212,19 @@ export class Manager {
     return { running: !!a && a.currentJobId != null, alive: !!a, queued, startedAt: a?.startedAt ?? null };
   }
 
+  // Освободить сессию перед переносом в архив: ход идёт или ждёт — нельзя;
+  // простаивающий процесс закрываем и ждём, пока он уйдёт (иначе допишет в перенесённый файл).
+  async releaseSession(sessionKey, timeoutMs = 15_000) {
+    const st = this.status(sessionKey);
+    if (st.running || st.queued) return false;
+    const a = this.active.get(sessionKey);
+    if (!a) return true;
+    this.closeProcess(a);
+    const until = Date.now() + timeoutMs;
+    while (this.active.get(sessionKey) === a && Date.now() < until) await new Promise(r => setTimeout(r, 200));
+    return this.active.get(sessionKey) !== a;
+  }
+
   runningSessions() {
     return [...this.active.entries()]
       .filter(([, a]) => a.currentJobId != null)

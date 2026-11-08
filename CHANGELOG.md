@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.0 — не выпущено
+
+Архив сессий (ТЗ `~/projects/notes/tz-session-archive.md`).
+
+- `POST /api/sessions/:id/archive` (`reason`, `topic`) — сессия целиком (транскрипт, папка файлов, чек-лист `session-todo`) переносится в `~/archive/sessions/<дата>_<id8>_<название>/` с `manifest.json`; движок перестаёт её видеть. Отказ, если идёт или ждёт ход, или сессия открыта в Claude Code; простаивающий процесс закрывается.
+- `GET /api/archive`, `POST /api/archive/:id/restore` — список и возврат на место.
+- Чистка: при старте и раз в 6 часов истёкшее (по умолчанию 90 дней, `archiveRetentionDays`) удаляется безвозвратно вместе со строками сессии в базе; итог — `~/archive/sessions/.last-purge`, карточка в MyCelium Console. Ручной запуск — `POST /api/archive/purge`.
+
 ## 0.3.0 — не выпущено
 
 - Режим «С подтверждением»: событие `permission`, ответ `POST /api/sessions/:id/permission` (allow / always / deny).

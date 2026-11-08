@@ -9,8 +9,9 @@ import { listSessions, readHistory, setCustomTitle } from './history.mjs';
 import { Manager, slimUsage } from './manager.mjs';
 import { forkSession } from '@anthropic-ai/claude-agent-sdk';
 import { externalSessionPids } from './locks.mjs';
+import { archiveSession, restoreSession, listArchive, purgeArchive } from './archive.mjs';
 
-const VERSION = '0.3.0';
+const VERSION = '0.4.0';
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 
 const cfg = loadConfig();
@@ -173,6 +174,32 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { jobId, sessionKey, position });
     }
 
+    // Архив сессий (archive.mjs): полное удаление из рабочего пространства со сроком годности
+    if ((m = p.match(/^\/api\/sessions\/([^/]+)\/archive$/)) && req.method === 'POST') {
+      const key = resolveKey(m[1]);
+      const body = JSON.parse((await readBody(req)).toString() || '{}');
+      if (externalSessionPids(key).length) return json(res, 409, { error: 'session is open in Claude Code (VS Code / CLI)' });
+      if (!(await mgr.releaseSession(key))) return json(res, 409, { error: 'session is busy (turn running or queued)' });
+      try {
+        const manifest = await archiveSession(cfg, key, { reason: String(body.reason ?? 'delete').slice(0, 20), topic: body.topic ?? null });
+        log(`архив: ${key.slice(0, 8)} «${manifest.title}» (${manifest.reason}) до ${new Date(manifest.expiresAt).toISOString().slice(0, 10)}`);
+        return json(res, 200, manifest);
+      } catch (e) { return json(res, e.code ?? 500, { error: e.message }); }
+    }
+    if (p === '/api/archive' && req.method === 'GET') {
+      return json(res, 200, { archive: listArchive(cfg) });
+    }
+    if ((m = p.match(/^\/api\/archive\/([^/]+)\/restore$/)) && req.method === 'POST') {
+      try {
+        const r = restoreSession(cfg, m[1]);
+        log(`архив: возвращена ${m[1].slice(0, 8)} «${r.title}»`);
+        return json(res, 200, r);
+      } catch (e) { return json(res, e.code ?? 500, { error: e.message }); }
+    }
+    if (p === '/api/archive/purge' && req.method === 'POST') {
+      return json(res, 200, purgeArchive(cfg, store, log));
+    }
+
     // Занята ли сессия внешним процессом Claude Code (VS Code / CLI) — см. locks.mjs
     if ((m = p.match(/^\/api\/sessions\/([^/]+)\/lock$/)) && req.method === 'GET') {
       const key = resolveKey(m[1]);
@@ -288,6 +315,10 @@ server.listen(cfg.port, cfg.host, () => {
   log(`mycelium-claude-daemon v${VERSION} слушает http://${cfg.host}:${cfg.port} (cwd=${cfg.cwd}, maxConcurrent=${cfg.maxConcurrent})`);
   // Чистая установка: списка моделей ещё нет — узнать его служебным процессом
   setTimeout(() => mgr.probeModels().catch(() => {}), 5_000);
+  // Чистка архива: при старте и раз в 6 часов
+  const purge = () => { try { purgeArchive(cfg, store, log); } catch (e) { log('архив: чистка не удалась:', e.message); } };
+  setTimeout(purge, 60_000);
+  setInterval(purge, 6 * 3600_000);
 });
 
 process.on('uncaughtException', e => log('uncaught:', e));
