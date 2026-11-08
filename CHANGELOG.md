@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.1 — не выпущено
+
+- Сессии движка пишутся с меткой `cli` (настройка `entrypoint`), а не `sdk-ts`: расширение VS Code перестаёт их прятать — видны сессии из Telegram, ClaudePocket и после `/fresh`.
+
 ## 0.4.0 — не выпущено
 
 Архив сессий (ТЗ `~/projects/notes/tz-session-archive.md`).

@@ -23,6 +23,9 @@ const DEFAULTS = {
   effort: null,  // null = дефолт
   // Через сколько мс простоя закрывать живой CLI-процесс после ответа (экономия RAM)
   idleProcessTimeoutMs: 60_000,
+  // Метка происхождения сессии в транскрипте. Без неё SDK пишет «sdk-ts», и расширение
+  // Claude Code для VS Code такие сессии не показывает в списке. «cli» — обычная сессия Claude Code.
+  entrypoint: 'cli',
   // Архив сессий: где лежит и сколько дней до окончательного удаления
   archiveDir: null,             // null = ~/archive/sessions
   archiveRetentionDays: 90,
