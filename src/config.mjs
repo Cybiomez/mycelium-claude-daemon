@@ -24,8 +24,10 @@ const DEFAULTS = {
   // Через сколько мс простоя закрывать живой CLI-процесс после ответа (экономия RAM)
   idleProcessTimeoutMs: 60_000,
   // Метка происхождения сессии в транскрипте. Без неё SDK пишет «sdk-ts», и расширение
-  // Claude Code для VS Code такие сессии не показывает в списке. «cli» — обычная сессия Claude Code.
-  entrypoint: 'cli',
+  // Claude Code для VS Code такие сессии не показывает в списке (прячет sdk-ts/sdk-cli/sdk-py).
+  // «cli» не годится: под SDK Claude сам переписывает его в «sdk-cli». «local-agent» — штатное
+  // значение Claude Code, которое он оставляет как есть.
+  entrypoint: 'local-agent',
   // Архив сессий: где лежит и сколько дней до окончательного удаления
   archiveDir: null,             // null = ~/archive/sessions
   archiveRetentionDays: 90,
