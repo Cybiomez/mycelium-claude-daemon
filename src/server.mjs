@@ -11,7 +11,7 @@ import { forkSession } from '@anthropic-ai/claude-agent-sdk';
 import { externalSessionPids } from './locks.mjs';
 import { archiveSession, restoreSession, listArchive, purgeArchive } from './archive.mjs';
 
-const VERSION = '0.4.1';
+const VERSION = '0.4.2';
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 
 const cfg = loadConfig();
